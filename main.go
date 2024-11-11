@@ -48,11 +48,12 @@ import (
 )
 
 var (
-	pkgname = flag.String("p", "", "package name to use in output file")
-	prefix  = flag.String("x", "", "prefix to add to all top-level names")
-	notest  = flag.Bool("n", false, "ignore test files")
-	kill    = flag.Bool("k", false, "delete concatenated files from disk")
-	quiet   = flag.Bool("q", false, "don't print anything")
+	pkgname      = flag.String("p", "", "package name to use in output file")
+	prefix       = flag.String("x", "", "prefix to add to all top-level names")
+	notest       = flag.Bool("n", false, "ignore test files")
+	kill         = flag.Bool("k", false, "delete concatenated files from disk")
+	quiet        = flag.Bool("q", false, "don't print anything")
+	omitComments = flag.Bool("c", false, "omit comments from the concatenated files")
 )
 
 func die(v ...interface{}) {
@@ -201,7 +202,11 @@ func main() {
 
 	data := bytes.Replace(buf.Bytes(), []byte("package PACKAGE-DELETE-ME\n"), nil, -1)
 
-	f, err := parser.ParseFile(fset, "rewritten", data, parser.ParseComments)
+	var mode parser.Mode
+	if omitComments != nil && !*omitComments {
+		mode = parser.ParseComments
+	}
+	f, err := parser.ParseFile(fset, "rewritten", data, mode)
 	if err != nil {
 		die(err)
 	}
