@@ -10,13 +10,14 @@
 // optionally adding a prefix to all top-level names.
 //
 // Usage:
+//
 //	gocat [-p pkgname] [-x prefix] file_0 [file_n...] >file.go
 //
 // Example
 //
 //	gocat -p acl github.com/naegelejd/go-acl/acl* > acl.go
 //
-// Bugs
+// # Bugs
 //
 // Gocat has many limitations, most of them not fundamental.
 //
@@ -51,6 +52,7 @@ var (
 	prefix  = flag.String("x", "", "prefix to add to all top-level names")
 	notest  = flag.Bool("n", false, "ignore test files")
 	kill    = flag.Bool("k", false, "delete concatenated files from disk")
+	quiet   = flag.Bool("q", false, "don't print anything")
 )
 
 func die(v ...interface{}) {
@@ -159,16 +161,22 @@ func main() {
 			f.Name = &ast.Ident{Name: "PACKAGE-DELETE-ME"}
 			for _, spec := range f.Imports {
 				if spec.Name != nil {
-					fmt.Printf("%s: renamed import not supported", fset.Position(spec.Name.Pos()))
+					if quiet != nil && !*quiet {
+						fmt.Printf("%s: renamed import not supported\n", fset.Position(spec.Name.Pos()))
+					}
 					continue
 				}
 				path, err := strconv.Unquote(spec.Path.Value)
 				if err != nil {
-					fmt.Printf("%s: invalid quoted string %s", fset.Position(spec.Name.Pos()), spec.Path.Value)
+					if quiet != nil && !*quiet {
+						fmt.Printf("%s: invalid quoted string %s\n", fset.Position(spec.Name.Pos()), spec.Path.Value)
+					}
 					continue
 				}
 				if path == "C" {
-					fmt.Printf("%s: import \"C\" not supported", fset.Position(spec.Name.Pos()))
+					if quiet != nil && !*quiet {
+						fmt.Printf("%s: import \"C\" not supported\n", fset.Position(spec.Name.Pos()))
+					}
 					continue
 				}
 				addImport(f0, path)
