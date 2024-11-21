@@ -34,6 +34,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/iancoleman/strcase"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -151,6 +152,9 @@ func main() {
 
 	var f0 *ast.File
 	importPathToName := make(map[string]string)
+	fileToOriginalPackageMap := make(map[*ast.File]string)
+	knownTypes := make(map[string]struct{})
+	packageStructRenameOps := make(map[string]map[string]string)
 	for i, name := range names {
 		f := files[name]
 		if i == 0 {
@@ -166,6 +170,8 @@ func main() {
 				importPathToName[path] = importName
 			}
 		} else {
+			packageName := f.Name.Name
+			fileToOriginalPackageMap[f] = packageName
 			f.Name = &ast.Ident{Name: "PACKAGE-DELETE-ME"}
 			for _, spec := range f.Imports {
 				importName, path, err := getImportNameAndPath(spec)
@@ -206,12 +212,38 @@ func main() {
 			}
 			decls := f.Decls[:0]
 			for _, d := range f.Decls {
-				if d, ok := d.(*ast.GenDecl); ok && d.Tok == token.IMPORT {
-					continue
+				if d, ok := d.(*ast.GenDecl); ok {
+					if d.Tok == token.IMPORT {
+						continue
+					} else if d.Tok == token.TYPE {
+						for _, spec := range d.Specs {
+							typeName := spec.(*ast.TypeSpec).Name.Name
+							if _, known := knownTypes[typeName]; known {
+								packageRenameOps := packageStructRenameOps[packageName]
+								if packageRenameOps == nil {
+									packageRenameOps = make(map[string]string)
+									packageStructRenameOps[packageName] = packageRenameOps
+								}
+								packageRenameOps[typeName] = fmt.Sprintf("%s%s", strcase.ToCamel(packageName), typeName)
+							} else {
+								knownTypes[typeName] = struct{}{}
+							}
+						}
+					}
 				}
 				decls = append(decls, d)
 			}
 			f.Decls = decls
+		}
+	}
+
+	for _, f := range files {
+		packageName := fileToOriginalPackageMap[f]
+		renameOps := packageStructRenameOps[packageName]
+		if renameOps != nil {
+			for oldName, newName := range renameOps {
+				renameTop(f, oldName, newName)
+			}
 		}
 	}
 
@@ -694,4 +726,13 @@ func walkBeforeAfter(x interface{}, before, after func(interface{})) {
 		}
 	}
 	after(x)
+}
+
+// FormatNode returns the "pretty-print" output for an ast node.
+func FormatNode(fset *token.FileSet, n ast.Node) string {
+	var buf strings.Builder
+	if err := printer.Fprint(&buf, fset, n); err != nil {
+		return ""
+	}
+	return buf.String()
 }
