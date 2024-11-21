@@ -23,12 +23,11 @@
 //
 // It does not work with cgo.
 //
-// It does not work with renamed imports.
-//
 // It does not correctly translate struct literals when prefixing is enabled
 // and a field key in the literal key is the same as a top-level name.
 //
 // It does not work with embedded struct fields.
+// TODO: check merging several packages and work on merging renamed imports
 package main
 
 import (
@@ -151,6 +150,7 @@ func main() {
 	}
 
 	var f0 *ast.File
+	importPathToName := make(map[string]string)
 	for i, name := range names {
 		f := files[name]
 		if i == 0 {
@@ -158,16 +158,17 @@ func main() {
 			if *pkgname != "" {
 				f.Name.Name = *pkgname
 			}
+			for _, spec := range f.Imports {
+				importName, path, err := getImportNameAndPath(spec)
+				if err != nil {
+					continue
+				}
+				importPathToName[path] = importName
+			}
 		} else {
 			f.Name = &ast.Ident{Name: "PACKAGE-DELETE-ME"}
 			for _, spec := range f.Imports {
-				if spec.Name != nil {
-					if quiet != nil && !*quiet {
-						fmt.Printf("%s: renamed import not supported\n", fset.Position(spec.Name.Pos()))
-					}
-					continue
-				}
-				path, err := strconv.Unquote(spec.Path.Value)
+				importName, path, err := getImportNameAndPath(spec)
 				if err != nil {
 					if quiet != nil && !*quiet {
 						fmt.Printf("%s: invalid quoted string %s\n", fset.Position(spec.Name.Pos()), spec.Path.Value)
@@ -180,7 +181,28 @@ func main() {
 					}
 					continue
 				}
-				addImport(f0, path)
+				if existingImportName, importPresent := importPathToName[path]; importPresent {
+					var importRef, newImportRef string
+					if importName == "" {
+						splitPath := strings.Split(path, "/")
+						importRef = splitPath[len(splitPath)-1]
+					} else {
+						importRef = importName
+					}
+					if existingImportName == "" {
+						splitPath := strings.Split(path, "/")
+						newImportRef = splitPath[len(splitPath)-1]
+					} else {
+						newImportRef = existingImportName
+					}
+					if importRef == newImportRef {
+						continue
+					}
+					renameTop(f, importRef, newImportRef)
+				} else {
+					addImport(f0, path, importName)
+					importPathToName[path] = importName
+				}
 			}
 			decls := f.Decls[:0]
 			for _, d := range f.Decls {
@@ -216,18 +238,34 @@ func main() {
 	}
 }
 
+func getImportNameAndPath(spec *ast.ImportSpec) (string, string, error) {
+	path, err := strconv.Unquote(spec.Path.Value)
+	if err != nil {
+		return "", "", err
+	}
+	var importName string
+	if spec.Name != nil {
+		importName = spec.Name.Name
+	}
+	return importName, path, nil
+}
+
 // NOTE: Below here stolen from gofix, should probably be in a library eventually.
 
 // addImport adds the import path to the file f, if absent.
 // Copied from cmd/fix.
-func addImport(f *ast.File, ipath string) (added bool) {
+func addImport(f *ast.File, ipath string, name string) (added bool) {
 	if imports(f, ipath) {
 		return false
 	}
 
 	// Determine name of import.
 	// Assume added imports follow convention of using last element.
-	_, name := path.Split(ipath)
+	namedImport := true
+	if name == "" {
+		_, name = path.Split(ipath)
+		namedImport = false
+	}
 
 	// Rename any conflicting top-level references from name to name_.
 	renameTop(f, name, name+"_")
@@ -237,6 +275,10 @@ func addImport(f *ast.File, ipath string) (added bool) {
 			Kind:  token.STRING,
 			Value: strconv.Quote(ipath),
 		},
+	}
+
+	if namedImport {
+		newImport.Name = &ast.Ident{Name: name}
 	}
 
 	// Find an import decl to add to.
